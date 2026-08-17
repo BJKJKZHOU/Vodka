@@ -1,130 +1,168 @@
-﻿#include "justcanfd.h"
-#include <limits>
+#include "justcanfd.h"
+
+#include <cstring>
+
+
+namespace
+{
+constexpr int USB_HEADER_SIZE = 7;
+constexpr int AXDR_MAX_DATA_LEN = 64;
+
+constexpr uint8_t MSG_NORMAL_DATA = 0x10;
+constexpr uint8_t MSG_FAST_DATA = 0x18;
+
+const char AXDR_MAGIC[4] = {'A', 'X', 'D', 'R'};
+}
 
 
 JustCanFd::JustCanFd()
 {
-
 }
+
 
 JustCanFd::~JustCanFd()
 {
-
 }
 
 
-bool JustCanFd::ProcessingFrame(char *data, int count, QVector<float> &dd)
-{
-    if (count <= 0)
-        return false;
-
-    if (count % 4 == 0) {
-        // 只有数据长度是4的倍数，才是合法的浮点数组
-        for (int i = 0; i < count - 4; i += 4) {
-            //            double value = datas[i].trimmed().toDouble();
-            float value;
-            memcpy(&value, data + i, 4);
-            dd.append(value);
-        }
-        return true;
-    }
-    return false;
-}
-
-
-// 帧结构：小端浮点数组 0x7f800000
 void JustCanFd::ProcessingDatas(char *data, int count)
 {
-
     frame_list_.clear();
 
+    int pos = 0;
 
-    int begin = 0, end = 0;
-    for (int i = 3; i < count; i++) {
-        char *data_ptr = data + i - 3;
-        int frame_tail_data;
-        bool frame_is_valid = false;
+    while (pos + 4 <= count) {
+        int magic = pos;
 
-        memcpy(&frame_tail_data, data_ptr, 4);
-        if (frame_tail_data != static_cast<int>(0x7F800000))
-            continue;
+        while (magic + 4 <= count && std::memcmp(data + magic, AXDR_MAGIC, 4) != 0)
+            magic++;
 
-        // 已经匹配到帧尾 0x7f800000
-        end = i;
-
-        int image_size = 0;
-        Frame frame;
-
-        if ((i + 4) < count) {
-            int frame_tail_data2;
-            memcpy(&frame_tail_data2, data + i + 1, 4);
-            if (frame_tail_data2 == static_cast<int>(0x7F800000)) {
-                // 匹配到2个连续的0x7f800000，这是个图片前导帧
-                i += 4;
-                if ((i - begin + 1) != 28) {
-                // 5个图片前导帧参数 + 2个帧尾，共7个整型数据，28byte
-                // 如果帧长度不等于28byte，说明图片前导帧格式错误
-                    break;
-                }
-
-
-                // 获取图片信息
-                int image_id;
-                int image_width;
-                int image_height;
-                RawImage::Format image_format;
-                memcpy(&image_id, data + i - 27, 4);
-                memcpy(&image_size, data + i - 23, 4);
-                memcpy(&image_width, data + i - 19, 4);
-                memcpy(&image_height, data + i - 15, 4);
-                memcpy(&image_format, data + i - 11, 4);
-                // !获取图片信息
-
-
-                if ((i + image_size) >= count) {
-                    // 图片长度超过缓冲区长度，可能还没接收完，直接返回，下次再来
-                    return;
-                }
-                if (image_id > (image_channels_.length() - 1)) {
-                    // 图片id > 图片通道数量，扩充图片通道
-                    // 在扩充图片通道之前，为过滤异常情况，保证发送了6帧大id的图片之后，再进行扩充
-
-                    image_count_mutation_count_++;
-                    if (image_id < 6 || image_count_mutation_count_ >= 6) {
-                        image_count_mutation_count_ = 0;
-                        while (image_channels_.length() < image_id + 1) {
-                            image_channels_.append(new RawImage());
-                        }
-                    }
-                }
-                if (image_id < image_channels_.length()) {
-                    // 图片id合法，把图片数据放到图片通道中
-                    image_channels_[image_id]->set((uchar*)data + i + 1, image_size,
-                                                   image_width, image_height, image_format);
-                }
-
-                // 把图片数据结尾记录为帧尾，图片前导帧+图片数据，构成了一个图片数据包
-                end = i + image_size;
-                i = end;
-                frame_is_valid = true;  // 至此，可以确定这是一个合法的图片数据包
-            } else {
-                // 解析浮点数组，将其转换为采样数据
-                frame_is_valid = ProcessingFrame(data + begin, (i - begin) + 1, frame.datas_);
-            }
-        } else {
-            // 解析浮点数组，将其转换为采样数据
-            frame_is_valid = ProcessingFrame(data + begin, (i - begin) + 1, frame.datas_);
+        if (magic > pos) {
+            Frame frame;
+            frame.start_index_ = pos;
+            frame.end_index_ = magic - 1;
+            frame.is_valid_ = false;
+            frame_list_.append(frame);
         }
 
-        // 记录帧 是否合法，开始位置，结束位置，图片尺寸（如果为0，标识其不是图片数据包）
-        frame.is_valid_ = frame_is_valid;
-        frame.start_index_ = begin;
-        frame.end_index_ = end;
-        frame.image_size_ = image_size;
-        frame_list_.append(frame);
-        // !记录帧
+        if (magic + 4 > count)
+            return;
 
-        begin = i+1;
+        if (magic + USB_HEADER_SIZE > count)
+            return;
 
+        uint16_t can_id;
+        std::memcpy(&can_id, data + magic + 4, sizeof(can_id));
+
+        const uint8_t len = static_cast<uint8_t>(data[magic + 6]);
+
+        if (can_id > 0x07FF || len > AXDR_MAX_DATA_LEN) {
+            Frame frame;
+            frame.start_index_ = magic;
+            frame.end_index_ = magic;
+            frame.is_valid_ = false;
+            frame_list_.append(frame);
+            pos = magic + 1;
+            continue;
+        }
+
+        const int frame_size = USB_HEADER_SIZE + len;
+
+        if (magic + frame_size > count)
+            return;
+
+        const int end = magic + frame_size - 1;
+        ProcessMessage(data + magic + USB_HEADER_SIZE, len, magic, end, can_id);
+
+        pos = end + 1;
     }
+}
+
+
+void JustCanFd::ProcessMessage(const char *data, int len, int start, int end, uint16_t can_id)
+{
+    const uint8_t msg_type = static_cast<uint8_t>((can_id >> 6) & 0x1F);
+
+    if (msg_type == MSG_FAST_DATA) {
+        ProcessFast(data, len, start, end);
+        return;
+    }
+
+    if (msg_type == MSG_NORMAL_DATA) {
+        ProcessNormal(data, len, start, end);
+        return;
+    }
+
+    Frame frame;
+    frame.start_index_ = start;
+    frame.end_index_ = end;
+    frame.is_valid_ = false;
+    frame_list_.append(frame);
+}
+
+
+void JustCanFd::ProcessFast(const char *data, int len, int start, int end)
+{
+    if (len < 4)
+        return;
+
+    const uint8_t sample_count = static_cast<uint8_t>(data[3]);
+    const int payload_len = len - 4;
+
+    if (sample_count == 0 || payload_len <= 0 || payload_len % (sample_count * 2) != 0)
+        return;
+
+    const int channel_count = payload_len / (sample_count * 2);
+
+    if (channel_count <= 0 || channel_count > 8)
+        return;
+
+    const char *sample_data = data + 4;
+
+    for (int sample = 0; sample < sample_count; sample++) {
+        Frame frame;
+        frame.start_index_ = start;
+        frame.end_index_ = end;
+        frame.is_valid_ = true;
+
+        for (int channel = 0; channel < channel_count; channel++) {
+            int16_t raw;
+            const int offset = (sample * channel_count + channel) * 2;
+            std::memcpy(&raw, sample_data + offset, sizeof(raw));
+
+            // V1 parser first exposes raw int16 counts as VOFA float channels.
+            // Applying physical Plot_Scale requires the active PLOT_CONFIG mapping.
+            frame.datas_.append(static_cast<float>(raw));
+        }
+
+        frame_list_.append(frame);
+    }
+}
+
+
+void JustCanFd::ProcessNormal(const char *data, int len, int start, int end)
+{
+    if (len < 4)
+        return;
+
+    const uint8_t channel_count = static_cast<uint8_t>(data[3]);
+    const int expected_len = 4 + channel_count * 4;
+
+    if (channel_count == 0 || channel_count > 15 || expected_len > len)
+        return;
+
+    Frame frame;
+    frame.start_index_ = start;
+    frame.end_index_ = end;
+    frame.is_valid_ = true;
+
+    const char *channel_data = data + 4;
+
+    for (int channel = 0; channel < channel_count; channel++) {
+        float value;
+        std::memcpy(&value, channel_data + channel * 4, sizeof(value));
+        frame.datas_.append(value);
+    }
+
+    frame_list_.append(frame);
 }
