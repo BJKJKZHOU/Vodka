@@ -182,7 +182,10 @@ void JustCanFd::ProcessFast(const char *data, int len, int start, int end)
 
     for (int sample = 0; sample < sample_count; sample++) {
         Frame frame;
-        frame.start_index_ = start;
+        // Only the first sample owns the raw packet. Additional samples use an
+        // empty range so VOFA+ plots every sample without printing the same
+        // CAN FD packet once per sample in the Hex receive area.
+        frame.start_index_ = sample == 0 ? start : end + 1;
         frame.end_index_ = end;
         frame.is_valid_ = true;
 
