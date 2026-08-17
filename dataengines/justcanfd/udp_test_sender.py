@@ -8,10 +8,12 @@ import struct
 import time
 
 
+RESPONSE_CAN_ID = 0x0081
 NORMAL_CAN_ID = 0x0401
 FAST_CAN_ID = 0x0601
 MAX_PAYLOAD_LEN = 64
 CONFIG_ID = 1
+FAST_TEST_VAR_IDS = (0x0001, 0x0002, 0x0011, 0x0010, 0x0012, 0x0013, 0x0014, 0x0102)
 
 
 def parse_args():
@@ -28,7 +30,7 @@ def parse_args():
     parser.add_argument(
         "--amplitude",
         type=float,
-        help="Defaults to 1.0 in normal mode and 10000 in fast mode.",
+        help="Defaults to 1.0 in normal mode and 10000 raw counts in fast mode.",
     )
     return parser.parse_args()
 
@@ -46,7 +48,7 @@ def validate_args(args):
             raise ValueError("normal mode supports 1 to 15 channels")
         payload_len = 4 + args.channels * 4
     else:
-        if not 1 <= args.channels <= 8:
+        if not 1 <= args.channels <= len(FAST_TEST_VAR_IDS):
             raise ValueError("fast mode supports 1 to 8 channels")
         if not 1 <= args.samples_per_packet <= 255:
             raise ValueError("samples-per-packet must be between 1 and 255")
@@ -63,9 +65,20 @@ def channel_value(phase, channel, channel_count):
     return math.sin(phase + phase_offset)
 
 
+def wrap_packet(can_id, payload):
+    return b"AXDR" + struct.pack("<HB", can_id, len(payload)) + payload
+
+
 def build_metadata(packet_index):
     seq = packet_index & 0xFFFF
     return struct.pack("<HB", seq, CONFIG_ID)
+
+
+def build_fast_config_response(channel_count):
+    var_ids = FAST_TEST_VAR_IDS[:channel_count]
+    payload = bytes((1, 0x04, 0x01, 0x00, 0x00, CONFIG_ID, channel_count))
+    payload += struct.pack("<" + "H" * channel_count, *var_ids)
+    return wrap_packet(RESPONSE_CAN_ID, payload)
 
 
 def build_normal_packet(packet_index, args):
@@ -78,7 +91,7 @@ def build_normal_packet(packet_index, args):
     payload = build_metadata(packet_index) + bytes([args.channels]) + struct.pack(
         "<" + "f" * len(values), *values
     )
-    return b"AXDR" + struct.pack("<HB", NORMAL_CAN_ID, len(payload)) + payload
+    return wrap_packet(NORMAL_CAN_ID, payload)
 
 
 def build_fast_packet(packet_index, args):
@@ -98,7 +111,7 @@ def build_fast_packet(packet_index, args):
     payload = build_metadata(packet_index) + bytes([args.samples_per_packet]) + struct.pack(
         "<" + "h" * len(values), *values
     )
-    return b"AXDR" + struct.pack("<HB", FAST_CAN_ID, len(payload)) + payload
+    return wrap_packet(FAST_CAN_ID, payload)
 
 
 def main():
@@ -112,6 +125,11 @@ def main():
     sent_bytes = 0
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        if args.mode == "fast":
+            sent_bytes += sock.sendto(build_fast_config_response(args.channels), target)
+            if args.interval_ms:
+                time.sleep(args.interval_ms / 1000.0)
+
         for packet_index in range(args.count):
             packet = build_packet(packet_index, args)
             sent_bytes += sock.sendto(packet, target)
