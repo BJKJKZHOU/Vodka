@@ -8,9 +8,10 @@ import struct
 import time
 
 
-NORMAL_CAN_ID = 0x0400
-FAST_CAN_ID = 0x0600
+NORMAL_CAN_ID = 0x0401
+FAST_CAN_ID = 0x0601
 MAX_PAYLOAD_LEN = 64
+CONFIG_ID = 1
 
 
 def parse_args():
@@ -62,6 +63,11 @@ def channel_value(phase, channel, channel_count):
     return math.sin(phase + phase_offset)
 
 
+def build_metadata(packet_index):
+    seq = packet_index & 0xFFFF
+    return struct.pack("<HB", seq, CONFIG_ID)
+
+
 def build_normal_packet(packet_index, args):
     amplitude = 1.0 if args.amplitude is None else args.amplitude
     phase = packet_index * 0.05
@@ -69,8 +75,7 @@ def build_normal_packet(packet_index, args):
         amplitude * channel_value(phase, channel, args.channels)
         for channel in range(args.channels)
     ]
-    metadata = packet_index.to_bytes(4, "little")[:3]
-    payload = metadata + bytes([args.channels]) + struct.pack(
+    payload = build_metadata(packet_index) + bytes([args.channels]) + struct.pack(
         "<" + "f" * len(values), *values
     )
     return b"AXDR" + struct.pack("<HB", NORMAL_CAN_ID, len(payload)) + payload
@@ -90,8 +95,7 @@ def build_fast_packet(packet_index, args):
                 int(amplitude * channel_value(phase, channel, args.channels))
             )
 
-    metadata = packet_index.to_bytes(4, "little")[:3]
-    payload = metadata + bytes([args.samples_per_packet]) + struct.pack(
+    payload = build_metadata(packet_index) + bytes([args.samples_per_packet]) + struct.pack(
         "<" + "h" * len(values), *values
     )
     return b"AXDR" + struct.pack("<HB", FAST_CAN_ID, len(payload)) + payload

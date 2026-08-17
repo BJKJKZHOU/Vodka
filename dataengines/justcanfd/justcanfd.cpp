@@ -148,7 +148,7 @@ void JustCanFd::ProcessNormal(const char *data, int len, int start, int end)
     const uint8_t channel_count = static_cast<uint8_t>(data[3]);
     const int expected_len = 4 + channel_count * 4;
 
-    if (channel_count == 0 || channel_count > 15 || expected_len > len)
+    if (channel_count == 0 || channel_count > 15 || expected_len != len)
         return;
 
     Frame frame;
