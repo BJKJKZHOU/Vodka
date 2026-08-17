@@ -1,0 +1,17 @@
+{
+  "SimplifiedChinese": {
+    "format": "USB 数据包：\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id（小端）\nuint8_t len\nuint8_t payload[len]\n\n消息类型：msg_type = (can_id >> 6) & 0x1F\n\n快速数据（msg_type = 0x18）：\npayload[3] 为采样点数 sample_count，payload[4...] 为按采样点优先排列的小端 int16_t 数据。通道数为 (len - 4) / (sample_count * 2)，最多 8 个通道。\n\n普通数据（msg_type = 0x10）：\npayload[3] 为通道数 channel_count，payload[4...] 为小端 float32 数据，最多 15 个通道。",
+    "example": "快速数据排列：\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\n普通数据排列：\nfloat ch0, float ch1, ..., float chN",
+    "url": "https://github.com/BJKJKZHOU/Vodka"
+  },
+  "TraditionalChinese": {
+    "format": "USB 數據包：\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id（小端）\nuint8_t len\nuint8_t payload[len]\n\n消息類型：msg_type = (can_id >> 6) & 0x1F\n\n快速數據（msg_type = 0x18）：\npayload[3] 為採樣點數 sample_count，payload[4...] 為按採樣點優先排列的小端 int16_t 數據。通道數為 (len - 4) / (sample_count * 2)，最多 8 個通道。\n\n普通數據（msg_type = 0x10）：\npayload[3] 為通道數 channel_count，payload[4...] 為小端 float32 數據，最多 15 個通道。",
+    "example": "快速數據排列：\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\n普通數據排列：\nfloat ch0, float ch1, ..., float chN",
+    "url": "https://github.com/BJKJKZHOU/Vodka"
+  },
+  "English": {
+    "format": "USB packet:\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id (little-endian)\nuint8_t len\nuint8_t payload[len]\n\nMessage type: msg_type = (can_id >> 6) & 0x1F\n\nFast data (msg_type = 0x18):\npayload[3] is sample_count. payload[4...] contains little-endian int16_t values in sample-major order. The channel count is (len - 4) / (sample_count * 2), with at most 8 channels.\n\nNormal data (msg_type = 0x10):\npayload[3] is channel_count. payload[4...] contains little-endian float32 values, with at most 15 channels.",
+    "example": "Fast data layout:\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\nNormal data layout:\nfloat ch0, float ch1, ..., float chN",
+    "url": "https://github.com/BJKJKZHOU/Vodka"
+  }
+}
