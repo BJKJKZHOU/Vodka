@@ -1,7 +1,8 @@
-﻿#ifndef JUSTCANFD_H
+#ifndef JUSTCANFD_H
 #define JUSTCANFD_H
 
 #include "dataengineinterface.h"
+
 
 class JustCanFd : public QObject, public DataEngineInterface
 {
@@ -13,9 +14,12 @@ public:
     explicit JustCanFd();
     ~JustCanFd();
 
-    void ProcessingDatas(char *data, int count);
-    bool ProcessingFrame(char *data, int count, QVector<float> &dd);
+    void ProcessingDatas(char *data, int count) override;
+
 private:
-    uint32_t image_count_mutation_count_ = 0;
+    void ProcessMessage(const char *data, int len, int start, int end, uint16_t can_id);
+    void ProcessFast(const char *data, int len, int start, int end);
+    void ProcessNormal(const char *data, int len, int start, int end);
 };
+
 #endif // JUSTCANFD_H
