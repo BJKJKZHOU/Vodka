@@ -1,6 +1,8 @@
 # JustCanFd 测试记录
 
-## 测试环境
+## 历史实测环境
+
+以下结果来自 2026-08-17 的历史实测，不能代表当前分支已经重新完成实机/VOFA+ 回归。
 
 | 项目 | 值 |
 | --- | --- |
@@ -12,30 +14,58 @@
 | 数据接口 | UDP `127.0.0.1:1347` |
 | 测试代码基线 | `a5a7f6c` |
 
-## 测试结果
+历史测试曾验证 Release 编译、NORMAL 数据解析和 FAST 多采样点解析。2026-09 参数协议及 CAN FD canonical wire 更新后，需要按下述步骤重新回归。
 
-| 编号 | 测试内容 | 输入 | 预期结果 | 实际结果 | 结论 |
-| --- | --- | --- | --- | --- | --- |
-| BUILD-01 | Release 编译 | Qt 5.14.2，`CONFIG+=release` | 生成动态库 | 生成 `libjustcanfd.so.1.0.0`，29072 字节 | 通过 |
-| NORMAL-01 | 普通数据解析 | CAN ID `0x0400`，负载 12 字节，2 个 `float32` 通道 | 输出连续的正弦、余弦数据 | VOFA+ 显示 `I0`、`I1`，波形与数值正常 | 通过 |
-| FAST-01 | 快速数据及多采样点解析 | CAN ID `0x0600`，150 包，每包 8 点 × 2 个 `int16_t` 通道 | 解析 1200 组采样 | 波形幅值约 ±10000，通道顺序正确 | 通过 |
-| FAST-02 | 快速数据精确值断言 | 单包 3 点：`(100,-100)`、`(200,-200)`、`(300,-300)` | 生成 3 个双通道 Frame | 三组输出值与输入完全一致 | 通过 |
-| EDGE-01 | 非法 CAN ID | CAN ID 大于 `0x07FF` | 标记为无效数据 | 尚未执行 | 待测试 |
-| EDGE-02 | 不完整数据包 | 帧长度小于声明长度 | 保留数据并等待后续字节 | 尚未执行 | 待测试 |
-| EDGE-03 | 最大负载 | 64 字节负载 | 正常解析且无越界 | 尚未执行 | 待测试 |
+## 当前回归前检查
 
-构建过程中 GCC 对 Qt 5.14.2 的 `qfutureinterface.h` 输出 C++20 兼容性警告，项目源码没有编译错误，最终退出码为 `0`。
+先同步并检查 AxDr 参数元数据：
+
+```bash
+python3 dataengines/justcanfd/sync_axdr_parameters.py
+python3 dataengines/justcanfd/sync_axdr_parameters.py --check
+```
+
+如果两个仓库不在同一父目录，使用 `--source` 或 `AXDR_L_MOTOR_ROOT` 指定 AxDr_L_Motor。
+
+然后编译插件：
+
+```bash
+cd dataengines/justcanfd
+mkdir -p build
+cd build
+qmake ../justcanfd.pro CONFIG+=release
+make -j"$(nproc)"
+```
+
+## CAN FD wire 检查
+
+USB/UDP wrapper 中的 `len` 现在表示完整 CAN FD data-field length，只允许：
+
+```text
+0..8, 12, 16, 20, 24, 32, 48, 64
+```
+
+有效应用字段不足该长度时，尾部必须为 `0x00`。测试发送器会自动按此规则对齐并填充。
 
 ## 普通数据回归
 
-先在 VOFA+ 中选择 `JustCanFd` 数据引擎和 UDP 数据接口，将本地端口设置为 `1347` 并打开连接，然后执行：
+在 VOFA+ 中选择 `JustCanFd` 数据引擎和 UDP 数据接口，将本地端口设置为 `1347` 并打开连接，然后执行：
 
 ```bash
 python3 dataengines/justcanfd/udp_test_sender.py \
     --mode normal --count 150 --channels 2
 ```
 
-预期生成两个 `float32` 通道，默认幅值为 ±1。
+当前 Node ID 为 1，因此 NORMAL_DATA CAN ID 为 `0x0401`。预期生成两个 `float32` 通道，默认幅值为 ±1。
+
+建议再测试会触发 CAN FD padding 的通道数，例如 6 通道：
+
+```bash
+python3 dataengines/justcanfd/udp_test_sender.py \
+    --mode normal --count 50 --channels 6
+```
+
+NORMAL 有效字段为 `4 + 6 * 4 = 28` bytes，实际 CAN FD data-field length 应为 32，最后 4 bytes 为零填充。
 
 ## 快速数据回归
 
@@ -44,28 +74,71 @@ python3 dataengines/justcanfd/udp_test_sender.py \
     --mode fast --count 150 --samples-per-packet 8 --channels 2
 ```
 
-每个 UDP 包的结构为：
+当前 FAST_DATA CAN ID 为 `0x0601`。测试脚本会先发送 Node 1 的 `PLOT_CONFIG RESPONSE` (`0x0081`)，默认配置：
 
 ```text
-AXDR + CAN ID 0x0600 + LEN 0x24 + 3 字节元数据
-     + sample_count 0x08 + 8 × 2 个 int16_t
+CH0 = PARAM_ADC_IA (0x0001), scale = 0.001
+CH1 = PARAM_ADC_IB (0x0002), scale = 0.001
 ```
 
-预期发送 150 个 43 字节数据包，并解析得到 1200 组双通道采样，默认幅值为 ±10000。
-
-## 快速数据精确值断言
-
-使用 Qt `QPluginLoader` 加载编译后的插件，向 `ProcessingDatas()` 输入一个包含 3 个采样点的 `0x0600` 数据包，结果如下：
+随后发送的 FAST_DATA 有效字段为：
 
 ```text
-sample 0: I0=100, I1=-100
-sample 1: I0=200, I1=-200
-sample 2: I0=300, I1=-300
-PASS: one 0x0600 packet produced 3 samples x 2 channels
+uint16 Seq
+uint8  Config_ID
+uint8  Sample_Count
+int16  Sample[Sample_Count][Channel_Count]
 ```
 
-## 已知现象
+2 通道 × 8 点时，有效字段长度为：
 
-快速数据包包含多个采样点时，VOFA+ 十六进制接收区会按采样点数量重复显示同一个原始数据包。例如 `sample_count = 8` 时显示 8 次。
+```text
+4 + 8 * 2 * 2 = 36 bytes
+```
 
-这是因为当前实现为每个采样点生成一个 `Frame`，并让这些 `Frame` 共用同一个原始数据范围。该现象不影响通道数量、采样顺序和波形数据。
+实际 CAN FD data-field length 为 48 bytes，最后 12 bytes 必须为 0。插件必须使用之前的 FAST `PLOT_CONFIG RESPONSE` 得到 `Channel_Count=2`，不能再通过 48-byte wire length 反推通道数。
+
+默认 raw 幅值约 ±10000，因此 VOFA+ 应显示约 ±10 A。150 包、每包 8 点时，应得到 1200 组双通道采样。
+
+## FAST 元数据回归
+
+建议至少再用 8 通道运行一次：
+
+```bash
+python3 dataengines/justcanfd/udp_test_sender.py \
+    --mode fast --count 50 --samples-per-packet 3 --channels 8
+```
+
+当前测试变量顺序为：
+
+```text
+0x0001 PARAM_ADC_IA       scale 0.001
+0x0002 PARAM_ADC_IB       scale 0.001
+0x0011 PARAM_RUN_IQ       scale 0.001
+0x0010 PARAM_RUN_ID       scale 0.001
+0x0012 PARAM_RUN_UD       scale 0.001
+0x0013 PARAM_RUN_UQ       scale 0.001
+0x0014 PARAM_RUN_THETA_E  scale 0.0002
+0x0021 PARAM_OBS_WE       scale 0.1
+```
+
+重点确认最后两个通道没有再按旧版 `Theta_m/Wm_Ref` 的 ID/比例解释。
+
+## 边界测试
+
+| 编号 | 测试内容 | 预期结果 |
+| --- | --- | --- |
+| EDGE-01 | CAN ID 大于 `0x07FF` | 标记为无效数据 |
+| EDGE-02 | 数据包长度小于 wrapper 声明长度 | 不越界；等待后续完整数据 |
+| EDGE-03 | wrapper length 为 9/17/36 等非 CAN FD 合法长度 | 拒绝 |
+| EDGE-04 | 合法 CAN FD length 但 padding 非零 | 对应 PLOT/FAST/NORMAL 帧不解析 |
+| EDGE-05 | FAST 未收到匹配 Config_ID 的配置响应 | 不解析 FAST_DATA |
+| EDGE-06 | FAST Config_ID 与当前配置不一致 | 不解析 FAST_DATA |
+| EDGE-07 | 配置已知但某 Var_ID 缺少本地 Plot Scale | 按已知通道数输出 raw int16 count，不套错误 scale |
+| EDGE-08 | 64 字节最大 CAN FD data field | 正常解析且无越界 |
+
+## 多 sample 的 Hex 显示
+
+当前实现只让一个 FAST packet 的第一个 sample 持有原始数据范围，其余 sample 使用空 raw range。因此历史版本中“一个 packet 在 VOFA+ Hex 区按 Sample_Count 重复显示”的现象已经在代码层规避。
+
+本文件在重新完成当前分支的 VOFA+ 回归前，不把上述 2026-09 项目标记为 PASS。

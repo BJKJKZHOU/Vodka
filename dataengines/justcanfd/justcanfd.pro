@@ -29,6 +29,7 @@ SOURCES += \
 
 HEADERS += \
         justcanfd.h \
+        axdr_plot_meta.generated.h \
         ../shared/dataengineinterface.h
 
 INCLUDEPATH += \

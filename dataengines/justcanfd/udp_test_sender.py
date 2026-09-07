@@ -13,7 +13,29 @@ NORMAL_CAN_ID = 0x0401
 FAST_CAN_ID = 0x0601
 MAX_PAYLOAD_LEN = 64
 CONFIG_ID = 1
-FAST_TEST_VAR_IDS = (0x0001, 0x0002, 0x0011, 0x0010, 0x0012, 0x0013, 0x0014, 0x0102)
+# Keep this list aligned with AxDr_L_Motor/Parameter/parameter.yaml FAST-plot
+# entries. The generated C++ metadata is the authoritative scale snapshot.
+FAST_TEST_VAR_IDS = (
+    0x0001,  # PARAM_ADC_IA
+    0x0002,  # PARAM_ADC_IB
+    0x0011,  # PARAM_RUN_IQ
+    0x0010,  # PARAM_RUN_ID
+    0x0012,  # PARAM_RUN_UD
+    0x0013,  # PARAM_RUN_UQ
+    0x0014,  # PARAM_RUN_THETA_E
+    0x0021,  # PARAM_OBS_WE
+)
+
+
+def canfd_len(required):
+    if not 0 <= required <= MAX_PAYLOAD_LEN:
+        raise ValueError("CAN FD payload exceeds 64 bytes")
+    if required <= 8:
+        return required
+    for length in (12, 16, 20, 24, 32, 48, 64):
+        if required <= length:
+            return length
+    raise AssertionError("unreachable")
 
 
 def parse_args():
@@ -66,7 +88,9 @@ def channel_value(phase, channel, channel_count):
 
 
 def wrap_packet(can_id, payload):
-    return b"AXDR" + struct.pack("<HB", can_id, len(payload)) + payload
+    wire_len = canfd_len(len(payload))
+    wire_payload = payload + bytes(wire_len - len(payload))
+    return b"AXDR" + struct.pack("<HB", can_id, wire_len) + wire_payload
 
 
 def build_metadata(packet_index):

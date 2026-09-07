@@ -24,7 +24,9 @@ private:
     bool PlotScale(uint16_t var_id, float &scale) const;
 
     uint8_t fast_config_id_ = 0;
+    uint8_t fast_channel_count_ = 0;
     QVector<float> fast_scales_;
+    bool fast_config_known_ = false;
     bool fast_config_valid_ = false;
 };
 

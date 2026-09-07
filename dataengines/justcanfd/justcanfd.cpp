@@ -1,4 +1,5 @@
 #include "justcanfd.h"
+#include "axdr_plot_meta.generated.h"
 
 #include <cstring>
 
@@ -18,6 +19,42 @@ constexpr uint8_t STATUS_OK = 0x00;
 constexpr uint8_t PLOT_FAST = 0x00;
 
 const char AXDR_MAGIC[4] = {'A', 'X', 'D', 'R'};
+
+bool CanFdLengthValid(int len)
+{
+    return (len >= 0 && len <= 8) || len == 12 || len == 16 || len == 20 ||
+           len == 24 || len == 32 || len == 48 || len == 64;
+}
+
+int CanFdLength(int required)
+{
+    if (required < 0 || required > AXDR_MAX_DATA_LEN)
+        return -1;
+    if (required <= 8)
+        return required;
+    if (required <= 12)
+        return 12;
+    if (required <= 16)
+        return 16;
+    if (required <= 20)
+        return 20;
+    if (required <= 24)
+        return 24;
+    if (required <= 32)
+        return 32;
+    if (required <= 48)
+        return 48;
+    return 64;
+}
+
+bool PaddingZero(const char *data, int used, int len)
+{
+    for (int index = used; index < len; index++) {
+        if (static_cast<uint8_t>(data[index]) != 0)
+            return false;
+    }
+    return true;
+}
 }
 
 
@@ -62,7 +99,7 @@ void JustCanFd::ProcessingDatas(char *data, int count)
 
         const uint8_t len = static_cast<uint8_t>(data[magic + 6]);
 
-        if (can_id > 0x07FF || len > AXDR_MAX_DATA_LEN) {
+        if (can_id > 0x07FF || !CanFdLengthValid(len)) {
             Frame frame;
             frame.start_index_ = magic;
             frame.end_index_ = magic;
@@ -122,11 +159,13 @@ void JustCanFd::ProcessResponse(const char *data, int len, int start, int end)
 
         const uint8_t config_id = static_cast<uint8_t>(data[5]);
         const uint8_t channel_count = static_cast<uint8_t>(data[6]);
-        const int expected_len = 7 + channel_count * 2;
+        const int used_len = 7 + channel_count * 2;
+        const int wire_len = CanFdLength(used_len);
 
-        if (channel_count > 0 && channel_count <= 8 && expected_len == len) {
+        if (channel_count > 0 && channel_count <= 8 && wire_len == len &&
+            PaddingZero(data, used_len, len)) {
             QVector<float> scales;
-            bool valid = true;
+            bool scales_valid = true;
 
             for (int channel = 0; channel < channel_count; channel++) {
                 uint16_t var_id;
@@ -135,18 +174,18 @@ void JustCanFd::ProcessResponse(const char *data, int len, int start, int end)
                 std::memcpy(&var_id, data + 7 + channel * 2, sizeof(var_id));
 
                 if (!PlotScale(var_id, scale)) {
-                    valid = false;
+                    scales_valid = false;
                     break;
                 }
 
                 scales.append(scale);
             }
 
-            if (valid) {
-                fast_config_id_ = config_id;
-                fast_scales_ = scales;
-                fast_config_valid_ = true;
-            }
+            fast_config_id_ = config_id;
+            fast_channel_count_ = channel_count;
+            fast_config_known_ = true;
+            fast_config_valid_ = scales_valid;
+            fast_scales_ = scales_valid ? scales : QVector<float>();
         }
     }
 
@@ -160,23 +199,23 @@ void JustCanFd::ProcessResponse(const char *data, int len, int start, int end)
 
 void JustCanFd::ProcessFast(const char *data, int len, int start, int end)
 {
-    if (len < 4)
+    if (len < 4 || !fast_config_known_)
         return;
 
     const uint8_t config_id = static_cast<uint8_t>(data[2]);
     const uint8_t sample_count = static_cast<uint8_t>(data[3]);
-    const int payload_len = len - 4;
 
-    if (sample_count == 0 || payload_len <= 0 || payload_len % (sample_count * 2) != 0)
+    if (config_id != fast_config_id_ || sample_count == 0 || fast_channel_count_ == 0)
         return;
 
-    const int channel_count = payload_len / (sample_count * 2);
+    const int channel_count = fast_channel_count_;
+    const int used_len = 4 + sample_count * channel_count * 2;
+    const int wire_len = CanFdLength(used_len);
 
-    if (channel_count <= 0 || channel_count > 8)
+    if (wire_len != len || !PaddingZero(data, used_len, len))
         return;
 
     const bool apply_scale = fast_config_valid_ &&
-                             config_id == fast_config_id_ &&
                              fast_scales_.size() == channel_count;
     const char *sample_data = data + 4;
 
@@ -212,9 +251,11 @@ void JustCanFd::ProcessNormal(const char *data, int len, int start, int end)
         return;
 
     const uint8_t channel_count = static_cast<uint8_t>(data[3]);
-    const int expected_len = 4 + channel_count * 4;
+    const int used_len = 4 + channel_count * 4;
+    const int wire_len = CanFdLength(used_len);
 
-    if (channel_count == 0 || channel_count > 15 || expected_len != len)
+    if (channel_count == 0 || channel_count > 15 || wire_len != len ||
+        !PaddingZero(data, used_len, len))
         return;
 
     Frame frame;
@@ -236,30 +277,12 @@ void JustCanFd::ProcessNormal(const char *data, int len, int start, int end)
 
 bool JustCanFd::PlotScale(uint16_t var_id, float &scale) const
 {
-    switch (var_id) {
-    case 0x0001: // Ia
-    case 0x0002: // Ib
-    case 0x0003: // Ic
-    case 0x0010: // Id
-    case 0x0011: // Iq
-    case 0x0012: // Ud
-    case 0x0013: // Uq
-    case 0x0020: // Id_Ref
-    case 0x0021: // Iq_Ref
-        scale = 0.001f;
-        return true;
-
-    case 0x0014: // Theta_e
-    case 0x0101: // Theta_m
-        scale = 0.0002f;
-        return true;
-
-    case 0x0102: // Wm
-    case 0x0110: // Wm_Ref
-        scale = 0.1f;
-        return true;
-
-    default:
-        return false;
+    for (int index = 0; index < kAxDrPlotScaleCount; index++) {
+        if (kAxDrPlotScales[index].id == var_id) {
+            scale = kAxDrPlotScales[index].scale;
+            return true;
+        }
     }
+
+    return false;
 }
