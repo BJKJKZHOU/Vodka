@@ -1,17 +1,17 @@
 {
   "SimplifiedChinese": {
-    "format": "USB 数据包：\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id（小端）\nuint8_t len\nuint8_t payload[len]\n\n消息类型：msg_type = (can_id >> 6) & 0x1F\n\n快速数据（msg_type = 0x18）：\npayload[3] 为采样点数 sample_count，payload[4...] 为按采样点优先排列的小端 int16_t 数据。通道数为 (len - 4) / (sample_count * 2)，最多 8 个通道。\n\n普通数据（msg_type = 0x10）：\npayload[3] 为通道数 channel_count，payload[4...] 为小端 float32 数据，最多 15 个通道。",
-    "example": "快速数据排列：\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\n普通数据排列：\nfloat ch0, float ch1, ..., float chN",
-    "url": "https://github.com/BJKJKZHOU/Vodka"
+    "format": "AXDR USB/UDP 帧：ASCII 'AXDR' + uint16 小端 CAN ID + uint8 合法 CAN FD DLC + 含零填充的 Payload。MsgType = (CAN ID >> 6) & 0x1f。NORMAL(0x10)：Seq(u16),Config_ID(u8),Channel_Count(u8),float32[Count],0填充；FAST(0x18)：Seq(u16),Config_ID(u8),Sample_Count(u8),int16[Sample_Count][Channel_Count],0填充。FAST 通道数由成功 PLOT_CONFIG 回包确定，不能从 DLC 推算。",
+    "example": "FAST 配置回包：Txn,0x04,0x01,0x00,Group=0,Config_ID,Count,uint16 Var_ID[Count]，末尾0填充。先接收成功配置回包再绘制 FAST 波形。",
+    "url": "https://github.com/BJKJKZHOU/Vodka/tree/master/dataengines/justcanfd"
   },
   "TraditionalChinese": {
-    "format": "USB 數據包：\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id（小端）\nuint8_t len\nuint8_t payload[len]\n\n消息類型：msg_type = (can_id >> 6) & 0x1F\n\n快速數據（msg_type = 0x18）：\npayload[3] 為採樣點數 sample_count，payload[4...] 為按採樣點優先排列的小端 int16_t 數據。通道數為 (len - 4) / (sample_count * 2)，最多 8 個通道。\n\n普通數據（msg_type = 0x10）：\npayload[3] 為通道數 channel_count，payload[4...] 為小端 float32 數據，最多 15 個通道。",
-    "example": "快速數據排列：\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\n普通數據排列：\nfloat ch0, float ch1, ..., float chN",
-    "url": "https://github.com/BJKJKZHOU/Vodka"
+    "format": "AXDR USB/UDP：ASCII 'AXDR' + uint16 小端 CAN ID + uint8 合法 CAN FD DLC + 含零填充 Payload。NORMAL(0x10)：Seq、Config_ID、Channel_Count、float32 陣列；FAST(0x18)：Seq、Config_ID、Sample_Count、int16 採樣陣列，通道數來自成功的配置回覆，不能從 DLC 推算。",
+    "example": "FAST 的 PLOT_CONFIG 成功回覆包含 Config_ID 與 uint16 通道 ID 列表；需要先收到回覆才能解析 FAST。",
+    "url": "https://github.com/BJKJKZHOU/Vodka/tree/master/dataengines/justcanfd"
   },
   "English": {
-    "format": "USB packet:\nmagic[4] = {'A', 'X', 'D', 'R'}\nuint16_t can_id (little-endian)\nuint8_t len\nuint8_t payload[len]\n\nMessage type: msg_type = (can_id >> 6) & 0x1F\n\nFast data (msg_type = 0x18):\npayload[3] is sample_count. payload[4...] contains little-endian int16_t values in sample-major order. The channel count is (len - 4) / (sample_count * 2), with at most 8 channels.\n\nNormal data (msg_type = 0x10):\npayload[3] is channel_count. payload[4...] contains little-endian float32 values, with at most 15 channels.",
-    "example": "Fast data layout:\nsample0_ch0, sample0_ch1, ..., sample1_ch0, sample1_ch1, ...\n\nNormal data layout:\nfloat ch0, float ch1, ..., float chN",
-    "url": "https://github.com/BJKJKZHOU/Vodka"
+    "format": "AXDR USB/UDP frame: ASCII AXDR + uint16 little-endian CAN ID + uint8 legal CAN FD DLC + payload including zero padding. NORMAL(0x10): Seq(u16), Config_ID(u8), Channel_Count(u8), float32[Count], padding. FAST(0x18): Seq(u16), Config_ID(u8), Sample_Count(u8), int16[Sample_Count][Channel_Count], padding. FAST channel count comes from a successful PLOT_CONFIG RESPONSE, never from the DLC.",
+    "example": "Successful FAST PLOT_CONFIG response contains Group=0, Config_ID, Count and uint16 Var_ID[Count] followed by DLC padding. FAST frames are decoded only after receiving their configuration.",
+    "url": "https://github.com/BJKJKZHOU/Vodka/tree/master/dataengines/justcanfd"
   }
 }

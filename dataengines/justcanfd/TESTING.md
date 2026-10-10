@@ -69,3 +69,35 @@ PASS: one 0x0600 packet produced 3 samples x 2 channels
 快速数据包包含多个采样点时，VOFA+ 十六进制接收区会按采样点数量重复显示同一个原始数据包。例如 `sample_count = 8` 时显示 8 次。
 
 这是因为当前实现为每个采样点生成一个 `Frame`，并让这些 `Frame` 共用同一个原始数据范围。该现象不影响通道数量、采样顺序和波形数据。
+
+## 2026-10-10：当前固件协议回归
+
+上述 2026-08-17 测试属于旧协议历史，不能证明现在的 CAN FD
+DLC 补零格式与新 Plot 通道 ID 已通过。
+
+本次新增 `tests/test_justcanfd.cpp` 作为当前解析器的可重复回归。
+需要 Qt 5 开发包、qmake 与 C++ 编译器。
+
+```bash
+cd dataengines/justcanfd
+mkdir -p tests/build && cd tests/build
+qmake ../tests.pro && make -j"$(nproc)"
+./test_justcanfd
+```
+
+测试代码覆盖：
+
+- NORMAL 1～15 通道，含 6 通道有效 28 B / DLC 32 B 的补零
+- FAST 1～8 通道，以及每组 PLOT_CONFIG 成功回包的 DLC 补零和比例换算
+- 不带已知 Config_ID 的 FAST 数据不推断通道数量
+- 运行中热配置：收到新 CONFIG 回包后仍能解旧 Config_ID 的在途样本
+- 未知 FAST Scale 的参数保持原始 int16 计数
+- 相同 Config_ID、不同节点的配置隔离
+- 非零填充、非法 DLC、分片和连续多帧解析
+
+`udp_test_sender.py` 已改为发送合法 DLC 长度和零填充；
+FAST 测试先发送成功的配置回包。
+
+**当前尚未在真实电机硬件和 VOFA GUI 上重新执行本次回归。**
+主机 C++ 测试需要可用的 Qt 5 开发环境，最终硬件验收仍需以新固件
+USB CDC 连续 FAST/NORMAL 采集为准。
