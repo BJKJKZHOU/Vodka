@@ -1,60 +1,63 @@
 # JustCanFd
 
-JustCanFd 是用于解析 AxDr CAN-FD-native 应用协议的 VOFA+ 数据引擎。
+JustCanFd 是 VOFA+ 的 AxDr **接收数据引擎**，根据当前
+[AxDr_L_Motor](https://github.com/BJKJKZHOU/AxDr_L_Motor)
+的 CAN FD 格式解析 FAST / NORMAL 波形。
 
-完整协议见 [AxDr_Protocol.md](AxDr_Protocol.md)，测试记录见 [TESTING.md](TESTING.md)，VOFA+ 协议帮助配置位于 `../generated/justcanfd.json`。
+- 输入：USB CDC/UDP 字节流中的 `AXDR + uint16 CAN ID + uint8 DLC + Payload`
+- 输出：NORMAL float32，以及根据配置回显正确换算的 FAST int16
+- FAST 必须先收到 PLOT_CONFIG 成功 RESPONSE；配置未知时不推断通道数量
+- 未知 Scale 的通道保持原始 int16 计数；不同 Config_ID 的在途旧数据仍可解码
+- 支持多个连续帧与跨接收块的部分帧，并校验 CAN FD DLC 补零
 
-## USB 承载
+格式见 [AxDr_Protocol.md](AxDr_Protocol.md)，历史与回归测试见
+[TESTING.md](TESTING.md)。插件不是通用 SocketCAN 驱动，也不自动执行
+Enable、Run、Stop 或 Save；如需发送这些命令，请使用 VOFA 二进制发送或外部工具。
 
-```text
-magic[4] = {'A', 'X', 'D', 'R'}
-uint16_t can_id  # 小端
-uint8_t len
-uint8_t payload[len]
-```
+## 固件通信 ID（Node 1）
 
-11-bit CAN ID 使用 `Message Type + Node ID`。Node 1 的典型数据 ID：
+| 类型 | CAN ID |
+| --- | --- |
+| RESPONSE | `0x081` |
+| PLOT 请求 | `0x101` |
+| PARAMETER 请求 | `0x1C1` |
+| NORMAL_DATA | `0x401` |
+| FAST_DATA | `0x601` |
 
-- `0x0401`：NORMAL_DATA，1 kHz，float32；
-- `0x0601`：FAST_DATA，20 kHz 采样，int16 定点；
-- `0x0081`：RESPONSE。
+运行中更改 FAST 通道时应更换 Config_ID；否则无法通过数据包分辨旧、新配置。
 
-FAST 在收到成功的 `PLOT_CONFIG RESPONSE` 后，根据回显的 `Config_ID + Var_ID[]` 使用协议静态表中的 Plot Scale 将 int16 原始值恢复为物理值。若尚未收到对应配置，插件仍输出原始 int16 count，便于诊断。
-
-## Qt 路径
-
-```text
-/home/zhouheng/Qt5.14.2/5.14.2/gcc_64/bin/qmake
-```
-
-## 编译
+## Qt 5 编译
 
 ```bash
-cd /home/zhouheng/GitHub_Pro/Vodka/dataengines/justcanfd
-mkdir -p build
-cd build
-make distclean 2>/dev/null || true
-/home/zhouheng/Qt5.14.2/5.14.2/gcc_64/bin/qmake \
-    ../justcanfd.pro CONFIG+=release
+cd dataengines/justcanfd
+mkdir -p build && cd build
+qmake ../justcanfd.pro CONFIG+=release
 make -j"$(nproc)"
 ```
 
-## UDP 测试
+这里的 qmake 需要来自与 VOFA+ 插件 ABI 兼容的 Qt 5。
+也可以替换成 Qt 5 qmake 的完整路径。
 
-VOFA+ 选择 `JustCanFd` 和 UDP，监听 `127.0.0.1:1347`。
+## UDP 模拟
 
-NORMAL：
-
-```bash
-python3 dataengines/justcanfd/udp_test_sender.py \
-    --mode normal --count 150
-```
-
-FAST：
+在 VOFA 选择 JustCanFd 数据引擎，UDP 监听 `127.0.0.1:1347`：
 
 ```bash
-python3 dataengines/justcanfd/udp_test_sender.py \
-    --mode fast --count 150 --samples-per-packet 8 --channels 2
+python3 dataengines/justcanfd/udp_test_sender.py --mode normal --count 150
+python3 dataengines/justcanfd/udp_test_sender.py --mode fast --count 150 --channels 2 --samples-per-packet 8
 ```
 
-FAST 测试会先发送一帧 `PLOT_CONFIG RESPONSE`，默认 CH0/CH1 为 `Ia/Ib`，因此默认 ±10000 raw count 在 VOFA 中显示约 ±10 A。
+FAST 测试先发送正确补零的 CONFIG 成功回包，再发采样。
+默认 Ia/Ib 的 10000 raw count 换算后为 10 A。
+发送器可以用 `--channels`、`--node`、`--config-id` 修改模拟条件。
+
+## C++ 回归
+
+```bash
+cd dataengines/justcanfd
+mkdir -p tests/build && cd tests/build
+qmake ../tests.pro && make -j"$(nproc)"
+./test_justcanfd
+```
+
+Qt 5 开发环境是构建及测试的前置条件。
